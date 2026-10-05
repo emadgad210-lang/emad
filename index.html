@@ -70,6 +70,13 @@ textarea{min-height:90px}
   <textarea id="paste" placeholder="1001, شاي ليبتون&#10;1002, سكر 1 كيلو" style="margin-top:8px"></textarea>
   <div class="row"><button id="imp">استيراد</button><button class="sec" id="clr">مسح كل البيانات</button></div>
   <div class="msg" id="impMsg"></div>
+  <hr style="border:0;border-top:1px solid var(--bd);margin:16px 0">
+  <h2>النسخة الاحتياطية</h2>
+  <p class="mu">احفظ نسخة من الأصناف والجرد في ملف، واسترجعها وقت ما تحتاج (مثلاً لو غيرت الموبايل أو اتمسح المتصفح).</p>
+  <button class="big" id="bkBtn">💾 حفظ نسخة احتياطية</button>
+  <input type="file" id="bkFile" accept=".json,application/json" style="margin-top:8px">
+  <button class="big sec" id="rsBtn" style="margin-top:8px">♻️ استرجاع من نسخة</button>
+  <div class="msg" id="bkMsg"></div>
 </div>
 
 <div class="card tab" id="t-scan">
@@ -106,6 +113,21 @@ textarea{min-height:90px}
 const $=id=>document.getElementById(id);
 let items=[],counts={},cur=null,scanner=null,stream=null,loopOn=false;
 const K='inv_v1';
+/* صوت بيب واهتزاز */
+let actx=null;
+function unlockAudio(){try{if(!actx){const C=window.AudioContext||window.webkitAudioContext;if(C)actx=new C()}if(actx&&actx.state==='suspended')actx.resume()}catch(e){}}
+['click','touchstart','keydown'].forEach(ev=>document.addEventListener(ev,unlockAudio,{passive:true}));
+function tone(f,t0,d,type){const o=actx.createOscillator(),g=actx.createGain();o.type=type||'sine';o.frequency.value=f;o.connect(g);g.connect(actx.destination);const t=actx.currentTime+t0;g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.35,t+0.01);g.gain.exponentialRampToValueAtTime(0.0001,t+d);o.start(t);o.stop(t+d+0.02)}
+function beep(kind){
+  try{
+    unlockAudio();
+    if(actx){
+      if(kind==='err'){tone(260,0,0.16,'square');tone(200,0.2,0.22,'square')}
+      else{tone(1400,0,0.12,'sine')}
+    }
+    if(navigator.vibrate)navigator.vibrate(kind==='err'?[120,60,120]:60);
+  }catch(e){}
+}
 function load(){try{const d=JSON.parse(localStorage.getItem(K)||'null');if(d){items=d.items||[];counts=d.counts||{}}}catch(e){}}
 function persist(){try{localStorage.setItem(K,JSON.stringify({items,counts}))}catch(e){$('msg').innerHTML='<span class="err">تعذر الحفظ على الجهاز</span>'}}
 const norm=s=>String(s==null?'':s).trim();
@@ -200,8 +222,8 @@ $('clr').onclick=()=>{if(confirm('هتمسح الأصناف وكل الجرد. �
 function hideItem(){$('item').classList.add('hide');cur=null}
 function show(code){
   const it=find(code);
-  if(!it){hideItem();$('msg').innerHTML=`<span class="err">الكود ${esc(code)} غير موجود في القائمة</span>`;return}
-  cur=it;$('msg').textContent='';
+  if(!it){hideItem();beep('err');$('msg').innerHTML=`<span class="err">الكود ${esc(code)} غير موجود في القائمة</span>`;return}
+  cur=it;beep('ok');$('msg').textContent='';
   $('iName').textContent=it.name;$('iCode').textContent=it.code;
   $('iCur').textContent=counts[it.code]!==undefined?counts[it.code]:'-';
   $('qty').value=counts[it.code]!==undefined?counts[it.code]:'';
@@ -222,9 +244,9 @@ $('msg').onclick=e=>{const d=e.target.closest('[data-c]');if(d)show(d.dataset.c)
 function commit(add){
   if(!cur)return;
   const v=parseFloat($('qty').value);
-  if(isNaN(v)){$('msg').innerHTML='<span class="err">اكتب الكمية</span>';return}
+  if(isNaN(v)){beep('err');$('msg').innerHTML='<span class="err">اكتب الكمية</span>';return}
   counts[cur.code]=add?(counts[cur.code]||0)+v:v;
-  persist();render();
+  persist();render();beep('ok');
   $('msg').innerHTML=`<span class="ok">تم حفظ ${esc(cur.name)}: ${counts[cur.code]}</span>`;
   hideItem();$('q').value='';
 }
@@ -333,6 +355,40 @@ $('expTodo').onclick=()=>{
   items.forEach(i=>{if(counts[i.code]===undefined)rows.push([i.name,i.code])});
   if(rows.length===1){$('msg').innerHTML='<span class="err">كل الأصناف اتجردت، مفيش أصناف متبقية</span>';return}
   saveXlsx(rows,'لم يتم جردها',[40,22],'اصناف-لم-يتم-جردها');
+};
+
+/* النسخة الاحتياطية */
+async function shareOrDownload(blob,fn,type){
+  const file=new File([blob],fn,{type});
+  try{if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file]});return true}}catch(e){if(e&&e.name==='AbortError')return false}
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fn;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),4000);return true;
+}
+$('bkBtn').onclick=async()=>{
+  if(!items.length&&!Object.keys(counts).length){$('bkMsg').innerHTML='<span class="err">مفيش بيانات تتحفظ</span>';return}
+  const d=new Date(),p=n=>String(n).padStart(2,'0');
+  const fn='نسخة-جرد-'+d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'_'+p(d.getHours())+p(d.getMinutes())+'.json';
+  const data={app:'inv-emad-eldin',v:1,date:d.toISOString(),items,counts};
+  const ok=await shareOrDownload(new Blob([JSON.stringify(data)],{type:'application/json'}),fn,'application/json');
+  if(ok)$('bkMsg').innerHTML='<span class="ok">تم تجهيز النسخة ('+items.length+' صنف، '+Object.keys(counts).length+' تم جردها)</span>';
+};
+$('rsBtn').onclick=()=>{
+  const f=$('bkFile').files[0];
+  if(!f){$('bkMsg').innerHTML='<span class="err">اختار ملف النسخة الأول</span>';return}
+  const rd=new FileReader();
+  rd.onload=e=>{
+    let d;
+    try{d=JSON.parse(e.target.result)}catch(x){$('bkMsg').innerHTML='<span class="err">الملف مش نسخة صالحة</span>';return}
+    if(!d||d.app!=='inv-emad-eldin'||!Array.isArray(d.items)||typeof d.counts!=='object'||d.counts===null){$('bkMsg').innerHTML='<span class="err">الملف مش نسخة من البرنامج ده</span>';return}
+    const ni=d.items.filter(i=>i&&i.code!=null).map(i=>({code:String(i.code),name:String(i.name==null?i.code:i.name)}));
+    const nc={};Object.keys(d.counts).forEach(k=>{const v=Number(d.counts[k]);if(!isNaN(v))nc[k]=v});
+    if((items.length||Object.keys(counts).length)&&!confirm('هيتم استبدال البيانات الحالية بالنسخة ('+ni.length+' صنف، '+Object.keys(nc).length+' تم جردها). متأكد؟'))return;
+    items=ni;counts=nc;persist();render();hideItem();
+    $('bkMsg').innerHTML='<span class="ok">تم الاسترجاع: '+ni.length+' صنف، '+Object.keys(nc).length+' تم جردها</span>';
+    showTab('t-scan');
+  };
+  rd.onerror=()=>{$('bkMsg').innerHTML='<span class="err">تعذر فتح الملف</span>'};
+  rd.readAsText(f,'utf-8');
 };
 
 /* رسالة افتتاحية: جملة واحدة مختلفة في كل مرة تفتح فيها البرنامج */
