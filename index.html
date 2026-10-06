@@ -81,7 +81,7 @@ textarea{min-height:90px}
   <h2>الأصناف</h2>
   <p class="mu">ملف Excel/CSV: العمود الأول = الكود، والتاني = الاسم. أو الصق البيانات هنا (كل صنف في سطر: كود، اسم).</p>
   <input type="file" id="file" accept=".csv,.txt,.xlsx,.xls">
-  <textarea id="paste" placeholder="1001, شاي ليبتون&#10;1002, سكر 1 كيلو" style="margin-top:8px"></textarea>
+  <textarea id="paste" style="margin-top:8px"></textarea>
   <div class="row"><button id="imp">استيراد</button><button class="sec" id="clr">مسح كل البيانات</button></div>
   <div class="msg" id="impMsg"></div>
   <hr style="border:0;border-top:1px solid var(--bd);margin:16px 0">
@@ -112,6 +112,8 @@ textarea{min-height:90px}
   <h2>النتيجة</h2>
   <button class="big" id="expDone">تصدير أصناف تم جردها فعلًا</button>
   <button class="big sec" id="expTodo" style="margin-top:8px">تصدير أصناف لم يتم جردها</button>
+  <button class="big sec" id="expDoneTxt" style="margin-top:8px">تصدير أصناف تم جردها (نص TXT)</button>
+  <button class="big sec" id="expTodoTxt" style="margin-top:8px">تصدير أصناف لم يتم جردها (نص TXT)</button>
   <input id="rq" placeholder="ابحث في اللي اتجرد (اسم أو كود)" style="margin-top:10px">
   <div class="msg" id="rMsg"></div>
   <div class="list" id="list" style="margin-top:8px;max-height:none"></div>
@@ -125,8 +127,8 @@ textarea{min-height:90px}
     <div class="row"><button id="eOk">حفظ ✔</button><button class="sec" id="eCancel">إلغاء</button></div>
   </div>
 </div>
-<p class="mu" style="text-align:center">البيانات محفوظة على نفس الموبايل والمتصفح.</p>
-<p class="mu" id="libs"></p>
+
+
 </main>
 
 <nav class="tabs">
@@ -178,7 +180,6 @@ function render(){
 function loadScript(urls){return new Promise(res=>{let i=0;(function nx(){if(i>=urls.length)return res(false);const s=document.createElement('script');s.src=urls[i++];s.onload=()=>res(true);s.onerror=()=>{s.remove();nx()};document.head.appendChild(s)})()})}
 const libQR=loadScript(['https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js','https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js']);
 const libX=loadScript(['https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js','https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js']);
-Promise.all([libQR,libX]).then(([a,b])=>{$('libs').textContent='الكاميرا: '+(a?'جاهزة':('BarcodeDetector' in window?'مدمجة':'غير متاحة'))+' | Excel القديم (xls): '+(b?'جاهز':'غير متاح')});
 
 /* قراءة xlsx بدون مكتبات */
 async function inflate(u8){const ds=new DecompressionStream('deflate-raw');const w=ds.writable.getWriter();w.write(u8);w.close();return new Uint8Array(await new Response(ds.readable).arrayBuffer())}
@@ -393,21 +394,31 @@ async function saveXlsx(rows,sheetName,widths,prefix){
   setTimeout(()=>URL.revokeObjectURL(a.href),4000);
 }
 const numv=v=>{const n=Number(v);return v===''||isNaN(n)?v:n};
-/* 1) أصناف تم جردها: كود الصنف | اسم الصنف | عدد الجرد */
-$('expDone').onclick=()=>{
+function doneRows(){
   const rows=[['كود الصنف','اسم الصنف','عدد الجرد','الوحدة']];
   items.forEach(i=>{if(counts[i.code]!==undefined)rows.push([i.code,i.name,numv(counts[i.code]),unitOf(i.code)])});
   Object.keys(counts).forEach(c=>{if(!find(c))rows.push([c,'(غير موجود في القائمة)',numv(counts[c]),unitOf(c)])});
-  if(rows.length===1){$('msg').innerHTML='<span class="err">لسه مفيش أصناف اتجردت</span>';return}
-  saveXlsx(rows,'تم جردها',[22,40,14,12],'اصناف-تم-جردها');
-};
-/* 2) أصناف لم يتم جردها: اسم الصنف | الكود */
-$('expTodo').onclick=()=>{
+  if(rows.length===1){$('msg').innerHTML='<span class="err">لسه مفيش أصناف اتجردت</span>';return null}
+  return rows;
+}
+function todoRows(){
   const rows=[['اسم الصنف','الكود']];
   items.forEach(i=>{if(counts[i.code]===undefined)rows.push([i.name,i.code])});
-  if(rows.length===1){$('msg').innerHTML='<span class="err">كل الأصناف اتجردت، مفيش أصناف متبقية</span>';return}
-  saveXlsx(rows,'لم يتم جردها',[40,22],'اصناف-لم-يتم-جردها');
-};
+  if(rows.length===1){$('msg').innerHTML='<span class="err">كل الأصناف اتجردت، مفيش أصناف متبقية</span>';return null}
+  return rows;
+}
+async function saveTxt(rows,prefix){
+  const d=new Date(),p=n=>String(n).padStart(2,'0');
+  const fn=prefix+'-'+d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'.txt';
+  const text='\ufeff'+rows.map(r=>r.map(v=>String(v).replace(/[\t\r\n]+/g,' ')).join('\t')).join('\r\n');
+  await shareOrDownload(new Blob([text],{type:'text/plain;charset=utf-8'}),fn,'text/plain');
+}
+/* 1) أصناف تم جردها: كود الصنف | اسم الصنف | عدد الجرد */
+$('expDone').onclick=()=>{const rows=doneRows();if(rows)saveXlsx(rows,'تم جردها',[22,40,14,12],'اصناف-تم-جردها')};
+$('expDoneTxt').onclick=()=>{const rows=doneRows();if(rows)saveTxt(rows,'اصناف-تم-جردها')};
+/* 2) أصناف لم يتم جردها: اسم الصنف | الكود */
+$('expTodo').onclick=()=>{const rows=todoRows();if(rows)saveXlsx(rows,'لم يتم جردها',[40,22],'اصناف-لم-يتم-جردها')};
+$('expTodoTxt').onclick=()=>{const rows=todoRows();if(rows)saveTxt(rows,'اصناف-لم-يتم-جردها')};
 
 /* تعديل / زيادة / حذف من شاشة النتيجة */
 let eState=null;
