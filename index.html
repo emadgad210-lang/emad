@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#AD2227">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -80,9 +82,7 @@ textarea{min-height:90px}
 <div class="card" id="secBar">
   <div class="mu" style="margin-bottom:8px">القسم الحالي (الجرد بيتسجل جواه)</div>
   <div class="row" style="margin-top:0"><select id="secSel" aria-label="القسم" style="min-width:0"></select><button id="secNew" style="flex:0 0 auto">＋ قسم جديد</button></div>
-  <details style="margin-top:10px"><summary class="mu" style="cursor:pointer">خيارات القسم</summary>
-    <div class="row"><button class="sec" id="secRen">✏️ تغيير الاسم</button><button class="sec" id="secDel">🗑️ حذف القسم</button></div>
-  </details>
+  <div class="row"><button class="sec" id="secRen">✏️ تعديل القسم</button><button class="sec" id="secDel" style="color:var(--er)">🗑️ حذف القسم</button></div>
   <div class="msg" id="secMsg"></div>
 </div>
 
@@ -371,7 +371,10 @@ function commit(add){
   if(!cur)return;
   const v=parseFloat($('qty').value);
   if(isNaN(v)){beep('err');$('msg').innerHTML='<span class="err">اكتب الكمية</span>';return}
-  if(v>=1000&&!confirm('الكمية '+v+' كبيرة. متأكد إنها صح؟'))return;
+  {const base=add?(counts[cur.code]||0):0,tot=base+v;
+    if(tot<0){beep('err');$('msg').innerHTML=add?'<span class="err">الإجمالي مينفعش يبقى أقل من صفر (الجرد الحالي: '+base+')</span>':'<span class="err">الكمية مينفعش تبقى سالبة</span>';return}
+    if(v<0&&!confirm('الكمية '+v+' سالبة وهتتخصم من الجرد الحالي ('+base+'). متأكد؟'))return}
+  if(v>200&&!confirm('الكمية '+v+' كبيرة. متأكد إنها صح؟'))return;
   const code=cur.code,name=cur.name,prev=counts[code],prevU=units[code],tk=++undoTk,u=$('unit').value;
   if(add&&prev!==undefined&&prevU&&prevU!==u){beep('err');$('msg').innerHTML=`<span class="err">الصنف متجرد بوحدة (${esc(prevU)}). اختار نفس الوحدة، أو دوس "حفظ" لاستبدال الجرد بالوحدة الجديدة</span>`;return}
   undoInfo={code,prev,prevU,tk,box:'msg'};
@@ -559,7 +562,10 @@ function eSave(){
   if(!eState)return;
   const v=parseFloat($('eQty').value);
   if(isNaN(v)){beep('err');$('eMsg').innerHTML='<span class="err">اكتب الكمية</span>';return}
-  if(v>=1000&&!confirm('الكمية '+v+' كبيرة. متأكد إنها صح؟'))return;
+  {const add=eState.mode==='add',base=add?(counts[eState.code]||0):0,tot=base+v;
+    if(tot<0){beep('err');$('eMsg').innerHTML=add?'<span class="err">الإجمالي مينفعش يبقى أقل من صفر (الجرد الحالي: '+base+')</span>':'<span class="err">الكمية مينفعش تبقى سالبة</span>';return}
+    if(v<0&&!confirm('الكمية '+v+' سالبة وهتتخصم من الجرد الحالي ('+base+'). متأكد؟'))return}
+  if(v>200&&!confirm('الكمية '+v+' كبيرة. متأكد إنها صح؟'))return;
   const {code,mode}=eState,u=$('eUnit').value;
   if(mode==='add')rChange(code,(counts[code]||0)+v,units[code]||u,'تمت الزيادة على');
   else rChange(code,v,u,'تم تعديل');
@@ -638,6 +644,8 @@ function showTab(id){
 }
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>showTab(b.dataset.t));
 load();render();showTab(items.length?'t-scan':'t-items');
+/* تشغيل بدون نت */
+if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{})})}
 </script>
 </body>
 </html>
