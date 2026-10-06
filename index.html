@@ -77,6 +77,15 @@ textarea{min-height:90px}
 <header class="bar"><button id="themeBtn" aria-label="تبديل الوضع الغامق/الفاتح">🌙</button><h1>جرد عماد الدين</h1><div class="stats"><div><b id="sTot">0</b>إجمالي الأصناف</div><div><b id="sDone">0</b>تم جردها</div></div><div class="prog"><div class="tr"><i id="pBar"></i></div><b id="pPct">0%</b></div></header>
 <main>
 
+<div class="card" id="secBar">
+  <div class="mu" style="margin-bottom:8px">القسم الحالي (الجرد بيتسجل جواه)</div>
+  <div class="row" style="margin-top:0"><select id="secSel" aria-label="القسم" style="min-width:0"></select><button id="secNew" style="flex:0 0 auto">＋ قسم جديد</button></div>
+  <details style="margin-top:10px"><summary class="mu" style="cursor:pointer">خيارات القسم</summary>
+    <div class="row"><button class="sec" id="secRen">✏️ تغيير الاسم</button><button class="sec" id="secDel">🗑️ حذف القسم</button></div>
+  </details>
+  <div class="msg" id="secMsg"></div>
+</div>
+
 <div class="card tab" id="t-items">
   <h2>الأصناف</h2>
   <p class="mu">ملف Excel/CSV: العمود الأول = الكود، والتاني = الاسم. أو الصق البيانات هنا (كل صنف في سطر: كود، اسم).</p>
@@ -110,10 +119,11 @@ textarea{min-height:90px}
 
 <div class="card tab" id="t-res">
   <h2>النتيجة</h2>
-  <button class="big" id="expDone">تصدير أصناف تم جردها فعلًا</button>
-  <button class="big sec" id="expTodo" style="margin-top:8px">تصدير أصناف لم يتم جردها</button>
-  <button class="big sec" id="expDoneTxt" style="margin-top:8px">تصدير أصناف تم جردها (نص TXT)</button>
-  <button class="big sec" id="expTodoTxt" style="margin-top:8px">تصدير أصناف لم يتم جردها (نص TXT)</button>
+  <p class="mu" id="resSec" style="margin:0 0 10px"></p>
+  <button class="big" id="expDone">تصدير جرد القسم الحالي</button>
+  <button class="big sec" id="expTodo" style="margin-top:8px">تصدير أصناف لم يتم جردها (كل الأقسام)</button>
+  <button class="big sec" id="expDoneTxt" style="margin-top:8px">تصدير جرد القسم الحالي (نص TXT)</button>
+  <button class="big sec" id="expTodoTxt" style="margin-top:8px">تصدير أصناف لم يتم جردها (نص TXT) (كل الأقسام)</button>
   <input id="rq" placeholder="ابحث في اللي اتجرد (اسم أو كود)" style="margin-top:10px">
   <div class="msg" id="rMsg"></div>
   <div class="list" id="list" style="margin-top:8px;max-height:none"></div>
@@ -139,6 +149,12 @@ textarea{min-height:90px}
 <script>
 const $=id=>document.getElementById(id);
 let items=[],counts={},units={},cur=null,scanner=null,stream=null,loopOn=false;
+let secs=[],activeId=null;
+function mkSec(name){return {id:'s'+Date.now().toString(36)+Math.floor(Math.random()*46656).toString(36),name,counts:{},units:{}}}
+function useSec(id){const x=secs.find(v=>v.id===id)||secs[0];activeId=x.id;counts=x.counts;units=x.units}
+const secNow=()=>secs.find(v=>v.id===activeId)||secs[0];
+const doneCodes=()=>{const st=new Set();secs.forEach(x=>Object.keys(x.counts).forEach(c=>st.add(c)));return st};
+const safeName=t=>String(t).replace(/[\\\/:*?"<>|\[\]]+/g,' ').replace(/\s+/g,' ').trim();
 const K='inv_v1';
 /* صوت بيب واهتزاز */
 let actx=null;
@@ -155,8 +171,16 @@ function beep(kind){
     if(navigator.vibrate)navigator.vibrate(kind==='err'?[120,60,120]:60);
   }catch(e){}
 }
-function load(){try{const d=JSON.parse(localStorage.getItem(K)||'null');if(d){items=d.items||[];counts=d.counts||{};units=d.units||{}}}catch(e){}}
-function persist(){try{localStorage.setItem(K,JSON.stringify({items,counts,units}))}catch(e){$('msg').innerHTML='<span class="err">تعذر الحفظ على الجهاز</span>'}}
+function load(){
+  let act=null;
+  try{const d=JSON.parse(localStorage.getItem(K)||'null');if(d){items=d.items||[];
+    if(Array.isArray(d.secs)&&d.secs.length)secs=d.secs.map(x=>({id:String(x.id),name:String(x.name),counts:x.counts||{},units:x.units||{}}));
+    else if(d.counts||d.units){const x=mkSec('عام');x.counts=d.counts||{};x.units=d.units||{};secs=[x]}
+    act=d.active}}catch(e){}
+  if(!secs.length)secs=[mkSec('عام')];
+  useSec(act);
+}
+function persist(){try{localStorage.setItem(K,JSON.stringify({items,secs,active:activeId}))}catch(e){$('msg').innerHTML='<span class="err">تعذر الحفظ على الجهاز</span>'}}
 const UN=['قطعة','علبة','كرتونة','بالتة','كيلو','جم'];
 const unitOf=c=>units[c]||'';
 const lastUnit=()=>{try{const u=localStorage.getItem('inv_lastunit');return UN.includes(u)?u:'قطعة'}catch(e){return 'قطعة'}};
@@ -166,9 +190,10 @@ function esc(s){return String(s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','
 const nz=t=>String(t==null?'':t).toLowerCase().replace(/[\u064B-\u0652\u0640]/g,'').replace(/[أإآ]/g,'ا').replace(/ة/g,'ه').replace(/ى/g,'ي').trim();
 function render(){
   $('sTot').textContent=items.length;
-  $('sDone').textContent=Object.keys(counts).length;
-  const tot=items.length,dn=items.filter(i=>counts[i.code]!==undefined).length,pc=tot?Math.min(100,Math.floor(dn*100/tot)):0;
+  const dc=doneCodes();$('sDone').textContent=dc.size;
+  const tot=items.length,dn=items.filter(i=>dc.has(i.code)).length,pc=tot?Math.min(100,Math.floor(dn*100/tot)):0;
   $('pBar').style.width=pc+'%';$('pPct').textContent=pc+'%';
+  renderSecs();
   const q=nz($('rq')?$('rq').value:'');
   let keys=Object.keys(counts).reverse();
   if(q)keys=keys.filter(c=>{const it=find(c);return nz(c).includes(q)||nz(it?it.name:'').includes(q)});
@@ -176,6 +201,31 @@ function render(){
   const note=all>keys.length?`<div class="mu" style="padding:8px 0">عرض ${keys.length} من ${all} — استخدم البحث للوصول لباقي الأصناف</div>`:'';
   $('list').innerHTML=keys.map(c=>{const it=find(c),u=unitOf(c);return `<div class="li col"><div class="top"><span>${esc(it?it.name:c)}<br><span class="mu">${esc(c)}</span></span><b>${counts[c]}${u?' '+esc(u):''}</b></div><div class="acts"><button data-a="edit" data-c="${esc(c)}">✏️ تعديل</button><button data-a="add" data-c="${esc(c)}">➕ زيادة</button><button class="dl" data-a="del" data-c="${esc(c)}">🗑️ حذف</button></div></div>`}).join('')+note||'<span class="mu">'+(q?'مفيش نتيجة للبحث':'لسه مفيش جرد')+'</span>';
 }
+function renderSecs(){
+  const sel=$('secSel');if(!sel)return;
+  sel.innerHTML=secs.map(x=>`<option value="${esc(x.id)}"${x.id===activeId?' selected':''}>${esc(x.name)} (${Object.keys(x.counts).length})</option>`).join('');
+  $('resSec').innerHTML='القسم: <b>'+esc(secNow().name)+'</b> — '+Object.keys(counts).length+' صنف مجرود فيه';
+}
+function secSwitched(){undoInfo=null;hideItem();$('msg').innerHTML='';$('rMsg').innerHTML='';persist();render()}
+$('secSel').onchange=()=>{useSec($('secSel').value);$('secMsg').textContent='';secSwitched()};
+$('secNew').onclick=()=>{
+  const n=norm(prompt('اسم القسم الجديد (مثلاً: شيبسي)'));if(!n)return;
+  if(secs.some(x=>x.name===n)){$('secMsg').innerHTML='<span class="err">القسم ده موجود بالفعل</span>';return}
+  const x=mkSec(n);secs.push(x);useSec(x.id);secSwitched();
+  $('secMsg').innerHTML='<span class="ok">تم إنشاء القسم «'+esc(n)+'»، وأي جرد دلوقتي هيتسجل فيه</span>';
+};
+$('secRen').onclick=()=>{
+  const x=secNow(),n=norm(prompt('الاسم الجديد للقسم',x.name));if(!n||n===x.name)return;
+  if(secs.some(v=>v!==x&&v.name===n)){$('secMsg').innerHTML='<span class="err">فيه قسم تاني بنفس الاسم</span>';return}
+  x.name=n;persist();render();$('secMsg').innerHTML='<span class="ok">تم تغيير الاسم</span>';
+};
+$('secDel').onclick=()=>{
+  if(secs.length<2){$('secMsg').innerHTML='<span class="err">لازم يفضل قسم واحد على الأقل</span>';return}
+  const x=secNow(),n=Object.keys(x.counts).length;
+  if(!confirm('هتحذف القسم «'+x.name+'» وجرده ('+n+' صنف). متأكد؟'))return;
+  secs=secs.filter(v=>v!==x);useSec(secs[0].id);secSwitched();
+  $('secMsg').innerHTML='<span class="ok">تم حذف القسم، والقسم الحالي بقى «'+esc(secNow().name)+'»</span>';
+};
 /* تحميل المكتبات مع بدائل */
 function loadScript(urls){return new Promise(res=>{let i=0;(function nx(){if(i>=urls.length)return res(false);const s=document.createElement('script');s.src=urls[i++];s.onload=()=>res(true);s.onerror=()=>{s.remove();nx()};document.head.appendChild(s)})()})}
 const libQR=loadScript(['https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js','https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js']);
@@ -232,7 +282,7 @@ function parseText(t){
 }
 function doImport(list){
   if(!list.length){$('impMsg').innerHTML='<span class="err">مفيش أصناف اتقرت، راجع الصيغة</span>';return}
-  items=list;counts={};units={};persist();render();
+  items=list;secs=[mkSec('عام')];useSec(secs[0].id);persist();render();
   $('impMsg').innerHTML=`<span class="ok">تم استيراد ${list.length} صنف</span>`;
 }
 $('imp').onclick=()=>{
@@ -255,7 +305,7 @@ $('imp').onclick=()=>{
   }else if(norm($('paste').value))doImport(rowsToItems(parseText($('paste').value)));
   else $('impMsg').innerHTML='<span class="err">اختار ملف أو الصق البيانات الأول</span>';
 };
-$('clr').onclick=()=>{if(confirm('هتمسح الأصناف وكل الجرد. متأكد؟')){items=[];counts={};units={};persist();render();hideItem();$('impMsg').textContent=''}};
+$('clr').onclick=()=>{if(confirm('هتمسح الأصناف وكل الجرد. متأكد؟')){items=[];secs=[mkSec('عام')];useSec(secs[0].id);persist();render();hideItem();$('impMsg').textContent=''}};
 function hideItem(){$('item').classList.add('hide');cur=null}
 function show(code){
   const it=find(code);
@@ -398,15 +448,16 @@ function doneRows(){
   const rows=[['كود الصنف','اسم الصنف','عدد الجرد','الوحدة']];
   items.forEach(i=>{if(counts[i.code]!==undefined)rows.push([i.code,i.name,numv(counts[i.code]),unitOf(i.code)])});
   Object.keys(counts).forEach(c=>{if(!find(c))rows.push([c,'(غير موجود في القائمة)',numv(counts[c]),unitOf(c)])});
-  if(rows.length===1){$('msg').innerHTML='<span class="err">لسه مفيش أصناف اتجردت</span>';return null}
+  if(rows.length===1){$('rMsg').innerHTML='<span class="err">القسم «'+esc(secNow().name)+'» لسه مفيش فيه أصناف اتجردت</span>';return null}
   return rows;
 }
 function todoRows(){
-  const rows=[['اسم الصنف','الكود']];
-  items.forEach(i=>{if(counts[i.code]===undefined)rows.push([i.name,i.code])});
-  if(rows.length===1){$('msg').innerHTML='<span class="err">كل الأصناف اتجردت، مفيش أصناف متبقية</span>';return null}
+  const rows=[['اسم الصنف','الكود']],dc=doneCodes();
+  items.forEach(i=>{if(!dc.has(i.code))rows.push([i.name,i.code])});
+  if(rows.length===1){$('rMsg').innerHTML='<span class="err">كل الأصناف اتجردت في الأقسام، مفيش أصناف متبقية</span>';return null}
   return rows;
 }
+const doneName=()=>'جرد-'+(safeName(secNow().name).replace(/ /g,'-')||'القسم');
 async function saveTxt(rows,prefix){
   const d=new Date(),p=n=>String(n).padStart(2,'0');
   const fn=prefix+'-'+d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'.txt';
@@ -414,8 +465,8 @@ async function saveTxt(rows,prefix){
   await shareOrDownload(new Blob([text],{type:'text/plain;charset=utf-8'}),fn,'text/plain');
 }
 /* 1) أصناف تم جردها: كود الصنف | اسم الصنف | عدد الجرد */
-$('expDone').onclick=()=>{const rows=doneRows();if(rows)saveXlsx(rows,'تم جردها',[22,40,14,12],'اصناف-تم-جردها')};
-$('expDoneTxt').onclick=()=>{const rows=doneRows();if(rows)saveTxt(rows,'اصناف-تم-جردها')};
+$('expDone').onclick=()=>{const rows=doneRows();if(rows)saveXlsx(rows,safeName(secNow().name).slice(0,31)||'تم جردها',[22,40,14,12],doneName())};
+$('expDoneTxt').onclick=()=>{const rows=doneRows();if(rows)saveTxt(rows,doneName())};
 /* 2) أصناف لم يتم جردها: اسم الصنف | الكود */
 $('expTodo').onclick=()=>{const rows=todoRows();if(rows)saveXlsx(rows,'لم يتم جردها',[40,22],'اصناف-لم-يتم-جردها')};
 $('expTodoTxt').onclick=()=>{const rows=todoRows();if(rows)saveTxt(rows,'اصناف-لم-يتم-جردها')};
@@ -474,12 +525,12 @@ async function shareOrDownload(blob,fn,type){
   setTimeout(()=>URL.revokeObjectURL(a.href),4000);return true;
 }
 $('bkBtn').onclick=async()=>{
-  if(!items.length&&!Object.keys(counts).length){$('bkMsg').innerHTML='<span class="err">مفيش بيانات تتحفظ</span>';return}
+  if(!items.length&&!doneCodes().size){$('bkMsg').innerHTML='<span class="err">مفيش بيانات تتحفظ</span>';return}
   const d=new Date(),p=n=>String(n).padStart(2,'0');
   const fn='نسخة-جرد-'+d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'_'+p(d.getHours())+p(d.getMinutes())+'.json';
-  const data={app:'inv-emad-eldin',v:1,date:d.toISOString(),items,counts,units};
+  const data={app:'inv-emad-eldin',v:2,date:d.toISOString(),items,secs,active:activeId};
   const ok=await shareOrDownload(new Blob([JSON.stringify(data)],{type:'application/json'}),fn,'application/json');
-  if(ok)$('bkMsg').innerHTML='<span class="ok">تم تجهيز النسخة ('+items.length+' صنف، '+Object.keys(counts).length+' تم جردها)</span>';
+  if(ok)$('bkMsg').innerHTML='<span class="ok">تم تجهيز النسخة ('+items.length+' صنف، '+doneCodes().size+' تم جردها، '+secs.length+' قسم)</span>';
 };
 $('rsBtn').onclick=()=>{
   const f=$('bkFile').files[0];
@@ -488,13 +539,18 @@ $('rsBtn').onclick=()=>{
   rd.onload=e=>{
     let d;
     try{d=JSON.parse(e.target.result)}catch(x){$('bkMsg').innerHTML='<span class="err">الملف مش نسخة صالحة</span>';return}
-    if(!d||d.app!=='inv-emad-eldin'||!Array.isArray(d.items)||typeof d.counts!=='object'||d.counts===null){$('bkMsg').innerHTML='<span class="err">الملف مش نسخة من البرنامج ده</span>';return}
+    if(!d||d.app!=='inv-emad-eldin'||!Array.isArray(d.items)||!(Array.isArray(d.secs)||(d.counts&&typeof d.counts==='object'))){$('bkMsg').innerHTML='<span class="err">الملف مش نسخة من البرنامج ده</span>';return}
     const ni=d.items.filter(i=>i&&i.code!=null).map(i=>({code:String(i.code),name:String(i.name==null?i.code:i.name)}));
-    const nc={};Object.keys(d.counts).forEach(k=>{const v=Number(d.counts[k]);if(!isNaN(v))nc[k]=v});
-    if((items.length||Object.keys(counts).length)&&!confirm('هيتم استبدال البيانات الحالية بالنسخة ('+ni.length+' صنف، '+Object.keys(nc).length+' تم جردها). متأكد؟'))return;
-    const nu={};if(d.units&&typeof d.units==='object')Object.keys(d.units).forEach(k=>{if(k in nc&&UN.includes(d.units[k]))nu[k]=d.units[k]});
-    items=ni;counts=nc;units=nu;undoInfo=null;persist();render();hideItem();
-    $('bkMsg').innerHTML='<span class="ok">تم الاسترجاع: '+ni.length+' صنف، '+Object.keys(nc).length+' تم جردها</span>';
+    const cleanC=o=>{const c={};if(o&&typeof o==='object')Object.keys(o).forEach(k=>{const v=Number(o[k]);if(!isNaN(v))c[k]=v});return c};
+    const cleanU=(o,c)=>{const u={};if(o&&typeof o==='object')Object.keys(o).forEach(k=>{if(k in c&&UN.includes(o[k]))u[k]=o[k]});return u};
+    let ns=[];
+    if(Array.isArray(d.secs)&&d.secs.length)ns=d.secs.map(x=>{const c=cleanC(x&&x.counts);return {id:String(x&&x.id||''),name:String(x&&x.name||'قسم'),counts:c,units:cleanU(x&&x.units,c)}});
+    else{const c=cleanC(d.counts),x=mkSec('عام');x.counts=c;x.units=cleanU(d.units,c);ns=[x]}
+    ns.forEach((x,k)=>{if(!x.id||ns.findIndex(v=>v.id===x.id)!==k)x.id=mkSec('').id+k});
+    const tc=new Set();ns.forEach(x=>Object.keys(x.counts).forEach(c=>tc.add(c)));
+    if((items.length||doneCodes().size)&&!confirm('هيتم استبدال البيانات الحالية بالنسخة ('+ni.length+' صنف، '+tc.size+' تم جردها، '+ns.length+' قسم). متأكد؟'))return;
+    items=ni;secs=ns;useSec(d.active);undoInfo=null;persist();render();hideItem();
+    $('bkMsg').innerHTML='<span class="ok">تم الاسترجاع: '+ni.length+' صنف، '+tc.size+' تم جردها، '+ns.length+' قسم</span>';
     showTab('t-scan');
   };
   rd.onerror=()=>{$('bkMsg').innerHTML='<span class="err">تعذر فتح الملف</span>'};
@@ -524,6 +580,7 @@ try{matchMedia('(prefers-color-scheme: dark)').addEventListener('change',e=>{let
 /* التنقل بين الشاشات */
 function showTab(id){
   if(id!=='t-scan'&&typeof stopScan==='function'&&(scanner||stream))stopScan();
+  $('secBar').classList.toggle('hide',id==='t-items');
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('on',e.id===id));
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===id));
   window.scrollTo(0,0);
