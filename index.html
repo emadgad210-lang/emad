@@ -230,16 +230,64 @@ $('exp').onclick=async()=>{
 };
 $('clr').onclick=()=>{if(confirm('هتبدأ تحويل جديد وكل الأصناف الحالية هتتمسح. متأكد؟')){counts={};store.set(counts);render()}};
 
+let zxReader=null;
+function stopCam(){
+  clearInterval(camTimer);camTimer=null;
+  if(zxReader){try{zxReader.reset()}catch(e){}zxReader=null}
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+  const v=$('vid');v.srcObject=null;v.style.display='none';
+}
+function onCode(code){
+  stopCam();code=S(code);
+  $('scan').value=code;search(code,true);
+  if(!cur&&!$('res').innerHTML)msg('❌ الباركود '+code+' مش موجود في قايمة الأصناف',false);
+}
+function loadZX(){
+  return new Promise((res,rej)=>{
+    if(window.ZXing)return res();
+    const sc=document.createElement('script');
+    sc.src='https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+    sc.onload=()=>window.ZXing?res():rej();sc.onerror=rej;
+    document.head.appendChild(sc);
+  });
+}
 $('camBtn').onclick=async()=>{
   const v=$('vid');
-  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;clearInterval(camTimer);v.style.display='none';return}
-  if(!('BarcodeDetector' in window)){msg('الكاميرا مش مدعومة في المتصفح ده، استخدم Chrome على الموبايل أو جهاز سكانر',false);return}
+  if(stream||zxReader){stopCam();return}
+  const cons={video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false};
   try{
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
-    v.srcObject=stream;v.style.display='block';await v.play();
-    const det=new BarcodeDetector();
-    camTimer=setInterval(async()=>{try{const r=await det.detect(v);if(r.length){$('camBtn').click();$('scan').value=r[0].rawValue;search(r[0].rawValue,true)}}catch(e){}},400);
-  }catch(e){msg('مقدرتش أفتح الكاميرا',false)}
+    if('BarcodeDetector' in window){
+      // المتصفح بيدعم القراءة الأصلية: كل أنواع الباركود المدعومة
+      let fmts=[];try{fmts=await BarcodeDetector.getSupportedFormats()}catch(e){}
+      const det=fmts.length?new BarcodeDetector({formats:fmts}):new BarcodeDetector();
+      stream=await navigator.mediaDevices.getUserMedia(cons);
+      v.srcObject=stream;v.style.display='block';await v.play();
+      try{await stream.getVideoTracks()[0].applyConstraints({advanced:[{focusMode:'continuous'}]})}catch(e){}
+      let busy=false;
+      camTimer=setInterval(async()=>{
+        if(busy)return;busy=true;
+        try{const r=await det.detect(v);if(r.length)onCode(r[0].rawValue)}catch(e){}
+        busy=false;
+      },250);
+    }else{
+      // iPhone Safari / Firefox / أي متصفح مش بيدعم BarcodeDetector
+      msg('جاري تجهيز القارئ...',true);
+      await loadZX();
+      const Z=ZXing,hints=new Map();
+      hints.set(Z.DecodeHintType.POSSIBLE_FORMATS,[
+        Z.BarcodeFormat.EAN_13,Z.BarcodeFormat.EAN_8,Z.BarcodeFormat.UPC_A,Z.BarcodeFormat.UPC_E,
+        Z.BarcodeFormat.CODE_128,Z.BarcodeFormat.CODE_39,Z.BarcodeFormat.CODE_93,
+        Z.BarcodeFormat.ITF,Z.BarcodeFormat.CODABAR,Z.BarcodeFormat.QR_CODE,
+        Z.BarcodeFormat.DATA_MATRIX,Z.BarcodeFormat.PDF_417]);
+      hints.set(Z.DecodeHintType.TRY_HARDER,true);
+      zxReader=new Z.BrowserMultiFormatReader(hints,250);
+      v.style.display='block';msg('',true);
+      await zxReader.decodeFromConstraints(cons,v,(r)=>{if(r&&zxReader)onCode(r.getText())});
+    }
+  }catch(e){
+    stopCam();
+    msg(e&&e.name==='NotAllowedError'?'لازم تسمح للمتصفح باستخدام الكاميرا':'مقدرتش أفتح الكاميرا، اتأكد من النت وصلاحية الكاميرا',false);
+  }
 };
 render();loadCatalog();
 </script>
